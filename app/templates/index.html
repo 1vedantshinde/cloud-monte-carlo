@@ -1,0 +1,112 @@
+<!-- app/templates/index.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MC Particle POC</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    .box { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <h2>Monte Carlo – particle through slab (POC)</h2>
+
+  <div class="box">
+    <form id="jobForm">
+      <label>Material:
+        <select id="material">
+          {% for m in materials %}<option value="{{m}}">{{m}}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Thickness (mm):
+        <select id="thickness">
+          {% for t in thicknesses %}<option value="{{t}}">{{t}}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Samples:
+        <select id="samples">
+          <option value="100">100</option>
+          <option value="250">250</option>
+          <option value="500" selected>500</option>
+          <option value="1000">1000</option>
+        </select>
+      </label>
+      <label>Parallel:
+        <input type="checkbox" id="parallel">
+      </label>
+      <button type="submit">Submit job</button>
+    </form>
+  </div>
+
+  <div id="statusBox" class="box" style="display:none;">
+    <h3>Job status</h3>
+    <div id="jobId"></div>
+    <div id="jobStatus"></div>
+    <div id="resultArea" style="display:none;">
+      <h4>Result</h4>
+      <p id="summary"></p>
+      <img id="plot" src="" alt="plot" style="max-width:90%;">
+      <canvas id="histChart" width="600" height="200"></canvas>
+    </div>
+  </div>
+
+<script>
+document.getElementById('jobForm').onsubmit = async function(e){
+  e.preventDefault();
+  const payload = {
+    material: document.getElementById('material').value,
+    thickness: parseFloat(document.getElementById('thickness').value),
+    samples: parseInt(document.getElementById('samples').value),
+    parallel: document.getElementById('parallel').checked
+  };
+  const res = await fetch('/api/submit', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if(data.job_id){
+    document.getElementById('statusBox').style.display='block';
+    document.getElementById('jobId').innerText = 'Job ID: ' + data.job_id;
+    pollStatus(data.job_id);
+  } else {
+    alert('Submit error: ' + JSON.stringify(data));
+  }
+};
+
+async function pollStatus(jobId){
+  const sEl = document.getElementById('jobStatus');
+  sEl.innerText = 'Queued...';
+  const interval = setInterval(async () => {
+    const r = await fetch('/api/status/' + jobId);
+    if(r.status !== 200){ sEl.innerText = 'Status fetch failed'; clearInterval(interval); return; }
+    const st = await r.json();
+    sEl.innerText = 'Status: ' + (st.status || 'queued');
+    if(st.status === 'done'){
+      clearInterval(interval);
+      fetchResult(jobId);
+    }
+  }, 1000);
+}
+
+async function fetchResult(jobId){
+  const r = await fetch('/api/result/' + jobId);
+  if(r.status !== 200){ alert('Result not ready'); return; }
+  const res = await r.json();
+  document.getElementById('resultArea').style.display='block';
+  document.getElementById('summary').innerText = `Material ${res.material}, thickness ${res.thickness} mm — transmitted ${res.transmitted}/${res.samples} (${(res.transmitted_fraction*100).toFixed(2)}%) in ${res.runtime_seconds.toFixed(2)}s`;
+  document.getElementById('plot').src = res.plot;
+
+  // draw histogram with Chart.js
+  const ctx = document.getElementById('histChart').getContext('2d');
+  const bins = res.bins;
+  const counts = res.counts;
+  const labels = [];
+  for(let i=0;i<bins.length-1;i++) labels.push(bins[i].toFixed(2)+'-'+bins[i+1].toFixed(2));
+  new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ label:'path length counts', data: counts }] } });
+}
+</script>
+</body>
+</html>
